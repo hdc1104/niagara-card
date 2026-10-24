@@ -1,0 +1,9 @@
+{
+  "name": "niagara-card",
+  "version": "0.2.0b1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "python3 tools/build.py"
+  }
+}

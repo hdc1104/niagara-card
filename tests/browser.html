@@ -1,0 +1,69 @@
+<!doctype html><html lang="ko"><meta charset="utf-8"><title>Niagara HA 카드 모의 미리보기</title>
+<style>body{background:#e8edeb;margin:24px;font:14px sans-serif}main{max-width:480px;margin:auto}p{color:#526669}</style>
+<main><p>화면 미리보기 · 모의 데이터 (실제 가습기 측정값 아님)</p><niagara-card></niagara-card><pre id="result">검증 중</pre></main>
+<script type="module">
+import '../dist/niagara-card.js';
+const card = document.querySelector('niagara-card');
+const states = {};
+const put = (domain, key, state, attributes = {}) => states[`${domain}.niagara_abcd_${key}`] = {state, attributes};
+put('binary_sensor', 'connected', 'on'); put('binary_sensor', 'fresh', 'off');
+put('sensor', 'connection', '연결됨 · 알림 미수신');
+for (const key of ['humidity', 'temperature', 'water_level', 'target_humidity', 'mode']) put('sensor', key, 'unavailable');
+put('sensor', 'rx_count', '0');
+for (const key of ['reconnect', 'disconnect', 'diagnose', 'refresh']) put('button', key, 'unknown');
+put('number', 'timer', 'unknown');
+put('select', 'mode', 'unknown', {options: ['정지','1단계','2단계','3단계','4단계','5단계','6단계','자동','필터 건조']});
+put('select', 'target', 'unknown', {options: ['40%','45%','50%','55%','60%']});
+const calls = [];
+const hass = {states, callService: async (...args) => calls.push(args)};
+const assert = (condition, message) => {if (!condition) throw new Error(message);};
+try {
+ card.setConfig({type:'custom:niagara-card',title:'Niagara'});card.hass = hass;
+ assert(card._prefix === 'niagara_abcd', 'single device auto detection');
+ assert(customElements.get('niagara-card').getStubConfig(hass).entity_prefix === 'niagara_abcd', 'picker auto detection');
+ put('select','unused','unknown');
+ states['select.niagara_ffff_mode'] = {state:'unknown',attributes:{options:['정지','자동']}};
+ card.hass = hass;
+ assert(!card._prefix && card.shadowRoot.getElementById('description').textContent.includes('여러 가습기'), 'multiple devices require explicit selection');
+ const before = calls.length;
+ await card._call('button','press','disconnect');
+ assert(calls.length === before, 'ambiguous device must not be controlled');
+ const editor = customElements.get('niagara-card').getConfigElement();
+ editor.setConfig({type:'custom:niagara-card'});editor.hass = hass;
+ assert(editor.querySelectorAll('select option').length === 3, 'device picker options');
+ let chosen;
+ editor.addEventListener('config-changed',event=>{chosen=event.detail.config.entity_prefix;});
+ editor.querySelector('select').value='niagara_ffff';
+ editor.querySelector('select').dispatchEvent(new Event('change'));
+ assert(chosen === 'niagara_ffff', 'device picker selection');
+ delete states['select.niagara_ffff_mode'];
+ card.setConfig({type:'custom:niagara-card', entity_prefix:'niagara_abcd', title:'Niagara'}); card.hass = hass;
+ const $ = id => card.shadowRoot.getElementById(id);
+ assert($('humidity').textContent === '—', '미수신 측정값 표시');
+ await card._call('button','press','disconnect');
+ assert(calls.at(-1)[2].entity_id === 'button.niagara_abcd_disconnect', 'disconnect target');
+ await card._call('button','press','refresh');
+ assert(calls.at(-1)[2].entity_id === 'button.niagara_abcd_refresh', 'refresh target');
+ put('binary_sensor','connected','off');card.hass = hass;
+ assert(card.shadowRoot.querySelector('[data-panel="mode"]').disabled, 'offline control');
+ put('binary_sensor','connected','on');card.hass = hass;
+ await card._apply('timer', 3); assert(calls.at(-1)[0] === 'number' && calls.at(-1)[2].value === 3, 'timer service');
+ await card._apply('target', '55%'); assert(calls.at(-1)[2].option === '55%', 'target service');
+ await card._apply('mode', '자동'); assert(calls.at(-1)[2].option === '자동', 'mode service');
+ hass.callService = async () => {throw new Error('<b>전송 오류</b>');};
+ await card._call('button','press','diagnose');
+ assert($('message').textContent === '<b>전송 오류</b>' && !$('message').querySelector('b'), 'error text escaping');
+ hass.callService = async (...args) => calls.push(args);
+ put('binary_sensor','fresh','on'); put('sensor','humidity','45'); put('sensor','temperature','23');put('sensor','water_level','4');put('sensor','target_humidity','55');put('sensor','mode','자동');put('sensor','connection','상태 수신 중');put('number','timer','2');put('select','mode','자동',states['select.niagara_abcd_mode'].attributes);put('sensor','rx_count','12');put('sensor','last_received',new Date().toISOString());
+ card._message = false; $('message').classList.remove('error');card.hass = hass;
+ assert($('humidity').textContent === '45', 'received humidity');
+ card._panel = 'mode';card._renderOptions();
+ assert(card.shadowRoot.querySelectorAll('.option.selected').length === 1, 'selected mode');
+ card._panel = null;card._renderOptions();
+ card.setConfig({entity_prefix:'niagara_abcd',title:'<b>Niagara</b>'});
+ assert(!card.shadowRoot.querySelector('h1 b'), 'title escaping');
+ card.setConfig({entity_prefix:'niagara_abcd',title:'Niagara'});
+ document.querySelector('#result').textContent = 'PASS · 카드 렌더링, 서비스 호출, 연결 해제, 미수신 표시, 오류 처리';
+ document.documentElement.dataset.testResult='pass';
+} catch (error) {document.querySelector('#result').textContent = 'FAIL '+error.stack;document.documentElement.dataset.testResult='fail';}
+</script></html>
